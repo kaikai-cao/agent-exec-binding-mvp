@@ -1,5 +1,11 @@
 # Step 3 — Halo2 约束关系草案（v0.1）
 
+> **Historical draft — superseded by v0.2.**
+> This document records an earlier design and implementation snapshot.
+> Its implementation status and test counts are historical and do not
+> describe the current repository state. See the v0.2 relation specification
+> and the repository README for the current design and implementation status.
+
 状态：设计草案，尚未实现 Halo2 电路；不改变现有 Ed25519 / SHA-256 基线。
 
 ## 1. 本轮数据访问基线验收

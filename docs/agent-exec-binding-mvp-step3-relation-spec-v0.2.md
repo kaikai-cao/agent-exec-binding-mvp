@@ -1,6 +1,15 @@
 # Step 3 — Halo2 约束关系规格（v0.2）
 
-状态：**设计评审稿，尚未实现电路。** 本版修正 v0.1 中承诺对象、Merkle 根兼容性和动作编码不完整的问题。现有 Python / Ed25519 / SHA-256 基线保持不变。
+状态：完整关系设计规格（v0.2）。本文定义目标协议的公共输入、
+私有见证、承诺关系及电路约束。
+
+实现状态说明：当前 Rust/Halo2 原型仅实现固定三动作配额子关系。
+16 叶计划 Merkle Root、完整 Statement Commitment、可变动作数量、
+非活动槽位及动作 Schema 兼容性等约束尚未全部纳入 Halo2 电路。
+详见 `zk-v2-host/README_STEP3_2.md`。
+
+因此，本文描述的是目标关系规格，不应被理解为当前电路
+已经完整实现的功能。
 
 ## 0. 本版结论
 
@@ -296,6 +305,10 @@ Ed25519 信封继续负责认证授权方并绑定：协议版本、policy ID/ve
 
 ## 8. v1 证明边界
 
+说明：本节描述的是协议设计中 v1 证明范围，不代表当前
+Rust/Halo2 原型的实际证明范围。当前原型仅实现固定三动作
+配额子关系，具体边界以 `zk-v2-host/README_STEP3_2.md` 为准。
+
 电路证明：计划中每步的预留行数、隐藏单步上限 L、隐藏总预算 B，以及被公开承诺的有序计划根之间满足约束。
 
 v1 不证明：
@@ -337,10 +350,18 @@ v1 不证明：
 
 ## 10. 实施顺序
 
-1. 冻结本规格与 ID/domain constants；
-2. 在 Rust 端实现纯 host 编码、配额承诺、16 叶 Poseidon Merkle Tree 和 inclusion proof；先做稳定 test vectors；
-3. 再实现 Halo2 circuit，让 `MockProver` 对上述 accept/reject 向量全部验证；
-4. 再做真实 proof create/verify；
-5. 最后把 v2 Poseidon 根接入执行网关，保留 v1 SHA-256 baseline 作对照。
+| 工作项                            | 当前状态                |
+| ------------------------------ | ------------------- |
+| v0.2 关系规格                      | 已形成设计规格             |
+| Poseidon Host 编码与配额承诺          | 已实现                 |
+| 固定深度 16 叶 Poseidon 计划树         | 已实现 Host 参考实现       |
+| Statement Commitment 与公共输入编码   | 已实现 Host 参考实现       |
+| 固定三动作 Halo2 配额电路               | 已实现原型，MockProver 测试 |
+| 完整计划根与 Statement Commitment 约束 | 待实现                 |
+| 可变动作数量与非活动槽位约束                 | 待实现                 |
+| 动作 Schema 兼容性约束                | 待实现                 |
+| 证明与 Python 授权信封绑定              | 待实现                 |
+| 证明接入执行网关                       | 待实现                 |
+| 端到端安全性与性能评估                    | 待实现                 |
 
 在 host/gadget 一致性测试通过前，不开始性能优化，也不宣称完成 ZK 授权系统。

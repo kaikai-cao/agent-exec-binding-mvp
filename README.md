@@ -17,9 +17,9 @@ Recent work already covers (i) LLM-assisted natural-language policy compilation,
 1. **Untrusted model boundary:** the agent produces a `ToolCall`; it does not hold the signing key.
 2. **Fail-closed policy check:** the issuer checks principal, tool, resource, operation, field allowlist, mandatory filters, optional filter values, row limit, and tenant.
 3. **Request-specific Ed25519 grant:** the signed grant binds the policy hash/version, exact canonical request hash, context hash, tool-schema hash, one-time nonce, and validity interval.
-4. **Execution gateway:** verifies the grant, rechecks policy, rejects request/context/schema substitution, expired grants, and nonce replay, then executes the exact bound request.
+4. **Execution gateway:** takes independent JSON snapshots of the grant payload, request, and execution context at entry, verifies the signature over those snapshot bytes, rechecks policy against the snapshot-built context, rejects request/context/schema substitution, expired grants, and nonce replay, then hands a request, an isolated grant copy, and a context all built from those snapshots to the tool adapter. The authorized request hash and grant hash are pinned before the adapter runs. Adapter-side request mutation can be detected through receipt-binding verification. This check does not prevent side effects performed by a compromised or faulty tool adapter.
 5. **Tool-signed receipt:** binds the request hash, policy hash, context hash, nonce, tool schema, and output digest.
-6. **Signed hash-chain audit:** records allow/deny outcomes and detects entry modification.
+6. **Signed hash-chain audit:** records `ALLOW_EXECUTED`, `DENY`, `OUTCOME_UNKNOWN` (tool failed with an unknown outcome) and `RECEIPT_INVALID` (tool ran but its receipt failed verification), and detects entry modification.
 
 ### Plan-level batch baseline (`plan_batch.py`)
 
@@ -35,7 +35,7 @@ The plan-level implementation is a **signed authorization baseline, not ZKP**. T
 
 - This is not a production-ready gateway or complete MCP implementation.
 - The policy is a trusted, preconfigured structured envelope. There is no natural-language policy compiler yet.
-- Ed25519 signatures are used in this baseline; no zero-knowledge proof is implemented yet.
+- Ed25519 signatures are used in this baseline; the Python execution path does not use a zero-knowledge proof.
 - The tool server is a mock process and is trusted to sign truthful execution receipts. A signature authenticates the server's assertion; it does not independently prove that external data are true.
 - The audit chain and plan-step nullifier store are in-memory, single-process demonstrations. A real deployment needs durable, shared, transactional state across gateway replicas; the prototype consumes a step before calling the mock tool, so a failed tool call requires a new plan rather than an automatic retry.
 - The LLM is not yet connected. Tests use fixed plans to isolate the authorization protocol from model variability and prompt-injection behavior.
@@ -63,9 +63,45 @@ python demo_plan_batch.py
 python -m unittest discover -s tests -v
 ```
 
-## Current test coverage
+## Tests
 
-The current unit test suite contains 27 tests: 13 single-call tests and 14 plan-level tests. It covers successful execution plus policy violations, request/action substitution, context/session substitution, schema drift, expiry, replay, ordered-step enforcement, Merkle inclusion verification, aggregate-budget denial, forged grant, and audit tampering. Passing tests establish expected behavior for this prototype only; they do not establish production security or real-world attack resistance.
+The repository currently has 80 passing automated tests:
+
+| Test scope | Count | Status |
+| --- | --- | --- |
+| Python Agent Execution Binding | 24 | passed |
+| Python Data Access | 21 | passed |
+| Python Plan Batch | 14 | passed |
+| Rust Host | 11 | passed |
+| Rust Halo2 quota circuit | 10 | passed |
+| **Total** | **80** | **passed** |
+
+- 59 Python unit tests;
+- 11 Rust host tests;
+- 10 Rust Halo2 quota-circuit tests.
+
+Python tests:
+
+```powershell
+python -m unittest discover -s tests -v
+```
+
+Rust tests:
+
+```
+cd zk-v2-host
+cargo test --locked
+```
+
+The Halo2 quota circuit is additionally exercised through
+the `quota_mock` demo, while the host-side Poseidon plan,
+commitment, public-input, and Merkle inclusion functionality
+is exercised through `agent-exec-binding-host-v2`.
+
+These tests validate the implemented prototype, not the
+complete v0.2 relation or an end-to-end ZK execution system.
+
+The Python suite covers successful execution plus policy violations, request/action substitution, context/session substitution, schema drift, expiry, replay, ordered-step enforcement, Merkle inclusion verification, aggregate-budget denial, forged grant, and audit tampering. It also checks authorized/executed request consistency, exception-path audit outcomes, nonce binding consistency, and includes a no-lock mutation guard for the concurrency test. Passing tests establish expected behavior for this prototype only; they do not establish production security, end-to-end ZK authorization, or security effectiveness against a compromised tool server.
 
 ## First experiment matrix (next step)
 
@@ -80,6 +116,30 @@ Attack classes: unauthorized operation, sensitive-field read, required-filter re
 
 Primary metrics: attack success rate (ASR), false deny rate on benign calls, authorization latency, execution/receipt latency, proof-or-signature bytes, and audit verification cost. Each attack should be tested under paired seeds and with explicit expected outcomes.
 
-## Planned cryptographic extension
+## Current Halo2 prototype
 
-After the baseline is stable, replace selected private-attribute checks with a Halo2 proof. Public inputs should bind at least `policy_hash`, `request_hash`, `context_hash`, `tool_schema_hash`, and `nonce`; private witnesses can include hidden attributes or policy facts. The tool receipt remains a separate execution-evidence object. Do not conflate a valid authorization proof with proof that an external tool returned truthful data.
+The repository now includes an initial Halo2 quota circuit in
+`zk-v2-host`.
+
+The circuit proves a fixed three-action quota sub-relation:
+
+- a private budget, per-action limit, and blinding factor match a public
+  Poseidon quota commitment;
+- the budget and per-action limits satisfy their integer range constraints;
+- each action's reserved row count does not exceed the per-action limit;
+- the sum of the three reserved row counts does not exceed the budget.
+
+The prototype is tested with Halo2 `MockProver`.
+
+This is not yet a proof of the complete v0.2 relation. In particular,
+the circuit does not yet constrain the 16-leaf plan Merkle root,
+the full statement commitment, variable action counts, inactive slots,
+or action-schema compatibility. It is also not integrated with the
+Python authorization envelope and execution gateway.
+
+The Rust host currently provides Poseidon action encoding, plan-tree
+construction, quota and statement commitments, and public-input encoding.
+These host-side functions must not be confused with constraints enforced
+by the current Halo2 circuit.
+
+See `zk-v2-host/README_STEP3_2.md` for the exact circuit boundary.

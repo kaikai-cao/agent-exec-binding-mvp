@@ -81,7 +81,29 @@ The in-memory nullifier store is single-process and is not crash-safe or shared 
 
 This step uses Ed25519 signatures and SHA-256 Merkle commitments as a non-ZK baseline. The issuer salts a SHA-256 commitment to the private policy attributes; the grant exposes only the commitment, not the row quota or field allowlists. The gateway verifies the issuer signature and trusts the authority's check; it does **not** independently verify the hidden policy predicate.
 
-The next Halo2 stage must define public inputs and private witnesses precisely, select a circuit-friendly commitment/hash (likely a Pasta-field Poseidon construction), enforce bounded integer/range constraints for row counts and sums, and bind the exact ordered action commitment. Replacing SHA-256 with Poseidon changes the commitment format and must be treated as a protocol-version change, not a silent implementation detail.
+Replacing SHA-256 with Poseidon changes the commitment format and must be treated as a protocol-version change, not a silent implementation detail.
+
+### Current Halo2 prototype and remaining gap
+
+The Rust `data-query-v2-poseidon` host now provides Poseidon-based
+action encoding, a fixed-depth 16-leaf plan tree, quota commitments,
+statement commitments, and public-input encoding.
+
+An initial Halo2 circuit has also been implemented. It proves only
+the fixed three-action quota sub-relation: the private budget and
+per-action limit match the public quota commitment, each action
+respects the per-action limit, and the aggregate reservation does
+not exceed the budget.
+
+The current circuit does not yet constrain the plan Merkle root,
+the full statement commitment, variable action counts, inactive
+padding slots, or action-schema compatibility. It also does not
+verify the Ed25519 authorization envelope or execution receipts.
+
+The Rust v2 prototype is not yet integrated into the Python execution
+gateway. Therefore, the existing Python SHA-256 baseline remains the
+execution path, while the Halo2 implementation is a separate
+cryptographic prototype.
 
 ## 7. Current demonstration policy
 
