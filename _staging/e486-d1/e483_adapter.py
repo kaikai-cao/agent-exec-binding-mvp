@@ -15,7 +15,14 @@ from agent_exec_binding import (
     canonical_json,
     digest_object,
 )
-from src.execution_binding import ToolAdapter, ToolOperationConflict, schema_hash
+from src.execution_binding import (
+    ToolAdapter,
+    ToolCapabilities,
+    ToolLookupResult,
+    ToolLookupStatus,
+    ToolOperationConflict,
+    schema_hash,
+)
 
 
 class E483MockFinanceAdapter(ToolAdapter):
@@ -83,17 +90,41 @@ class E483MockFinanceAdapter(ToolAdapter):
                 raise ValueError("operation_id is already bound to another parent authorization")
             self._bindings[operation_id] = binding
 
+    @property
+    def capabilities(self) -> ToolCapabilities:
+        return ToolCapabilities(
+            supports_idempotency_key=True,
+            supports_authoritative_lookup=True,
+            idempotency_scope="e483-mock-finance-sqlite",
+        )
+
     def lookup(self, *, operation_id: str, request_digest: str):
         with closing(self._connect()) as con:
             row = con.execute(
                 "SELECT request_digest,result_json FROM mock_finance_results WHERE operation_id=?",
                 (operation_id,),
             ).fetchone()
+
         if row is None:
-            return None
+            return ToolLookupResult(
+                status=ToolLookupStatus.NOT_FOUND,
+                operation_id=operation_id,
+                request_digest=request_digest,
+                authoritative=True,
+            )
+
         if row[0] != request_digest:
-            raise ToolOperationConflict("operation_id is bound to another adapter request")
-        return json.loads(row[1])
+            raise ToolOperationConflict(
+                "operation_id is bound to another adapter request"
+            )
+
+        return ToolLookupResult(
+            status=ToolLookupStatus.SUCCEEDED,
+            operation_id=operation_id,
+            request_digest=request_digest,
+            result=json.loads(row[1]),
+            authoritative=True,
+        )
 
     def execute(
         self,

@@ -1,6 +1,7 @@
 """Focused D1 integration tests; run with the command in README_D1.md."""
 from __future__ import annotations
 
+import json
 import tempfile
 import time
 import unittest
@@ -15,7 +16,7 @@ from agent_exec_binding import (
 from e483_adapter import E483MockFinanceAdapter
 from integration_coordinator import IntegrationCoordinator
 from src.durable_broker import DurableCounterBroker
-from src.execution_binding import ExecutionBindingGateway
+from src.execution_binding import ExecutionBindingGateway, InjectedCrash
 
 
 class D1IntegrationTests(unittest.TestCase):
@@ -145,6 +146,127 @@ class D1IntegrationTests(unittest.TestCase):
         with self.assertRaises(Exception):
             self.coordinator.execute(call, self.context, grant)
         self.assertEqual(self.adapter.effect_count(), before)
+
+
+    def _restart_d1_stack(self):
+        """Reconstruct D1 runtime objects while preserving durable files and keys."""
+        audit = AuditChain(self.parent_gateway.audit.signing_key)
+
+        self.parent_gateway = ToolGateway(
+            self.parent_issuer.private_key.public_key(),
+            self.parent_tool,
+            self.parent_tool.private_key.public_key(),
+            self.policy,
+            audit,
+        )
+
+        self.adapter = E483MockFinanceAdapter(
+            tool=self.parent_tool,
+            database_path=self.root / "adapter.sqlite",
+        )
+
+        self.broker = DurableCounterBroker(
+            journal_path=self.root / "broker.sqlite",
+            counter_state_path=self.root / "counter.json",
+            broker_lock_path=self.root / "broker.lock",
+            lease_id="d1-lease",
+            quota_limit=3,
+        )
+
+        self.gateway = ExecutionBindingGateway(
+            issuer_public_key=self.e483_issuer_sk.public_key(),
+            gateway_private_key=self.e483_gateway_sk,
+            gateway_id="d1-gateway",
+            broker=self.broker,
+            journal_path=self.root / "gateway.sqlite",
+            lock_path=self.root / "gateway.lock",
+            tools={self.adapter.tool_name: self.adapter},
+        )
+
+        self.coordinator = IntegrationCoordinator(
+            parent_gateway=self.parent_gateway,
+            parent_tool=self.parent_tool,
+            parent_tool_public_key=self.parent_tool.private_key.public_key(),
+            e483_issuer_private_key=self.e483_issuer_sk,
+            e483_issuer_id="d1-issuer",
+            e483_gateway=self.gateway,
+            adapter=self.adapter,
+            lease_id="d1-lease",
+            quota_limit=3,
+        )
+
+    def test_process_restart_recovers_after_tool_effect_before_receipt(self):
+        call, grant = self._authorized("op-restart-after-tool-effect")
+
+        original_execute = self.gateway.execute
+
+        def crash_after_tool_effect(child_grant, request):
+            return original_execute(
+                child_grant, request, crash_at="after_tool_effect"
+            )
+
+        self.gateway.execute = crash_after_tool_effect
+
+        with self.assertRaises(InjectedCrash):
+            self.coordinator.execute(call, self.context, grant)
+
+        # Tool result is durable, but Gateway Receipt has not been committed.
+        self.assertEqual(self.adapter.effect_count(), 1)
+        self.assertEqual(self.broker.counter.read(), 1)
+
+        # Reconstruct the complete D1 runtime stack.
+        self._restart_d1_stack()
+
+        recovered = self.coordinator.execute(call, self.context, grant)
+
+        self.assertTrue(recovered.output)
+        self.assertFalse(recovered.replayed)
+        self.assertEqual(self.adapter.effect_count(), 1)
+        self.assertEqual(self.broker.counter.read(), 1)
+        self.assertEqual(
+            self.gateway.journal.get(call.operation_id)["status"],
+            "COMMITTED",
+        )
+        self.assertEqual(len(self.parent_gateway.audit.entries), 1)
+
+    def test_process_restart_recovers_after_gateway_receipt_commit(self):
+        call, grant = self._authorized("op-restart-after-receipt-commit")
+
+        original_execute = self.gateway.execute
+
+        def crash_after_receipt_commit(child_grant, request):
+            return original_execute(
+                child_grant, request, crash_at="after_receipt_commit"
+            )
+
+        self.gateway.execute = crash_after_receipt_commit
+
+        with self.assertRaises(InjectedCrash):
+            self.coordinator.execute(call, self.context, grant)
+
+        # Gateway Receipt is durable, but Parent AuditChain has not been updated.
+        journal_row = self.gateway.journal.get(call.operation_id)
+        self.assertEqual(journal_row["status"], "COMMITTED")
+        persisted_receipt = json.loads(journal_row["receipt_json"])
+        self.assertEqual(self.adapter.effect_count(), 1)
+        self.assertEqual(self.broker.counter.read(), 1)
+
+        # Reconstruct the complete D1 runtime stack.
+        self._restart_d1_stack()
+
+        recovered = self.coordinator.execute(call, self.context, grant)
+
+        self.assertTrue(recovered.replayed)
+        self.assertEqual(recovered.gateway_receipt, persisted_receipt)
+        self.assertEqual(self.adapter.effect_count(), 1)
+        self.assertEqual(self.broker.counter.read(), 1)
+        self.assertEqual(len(self.parent_gateway.audit.entries), 1)
+        self.assertTrue(
+            self.parent_gateway.audit.verify(
+                self.parent_gateway.audit.signing_key.public_key()
+            )
+        )
+
 
 
 if __name__ == "__main__":

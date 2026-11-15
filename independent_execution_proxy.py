@@ -424,7 +424,10 @@ class ProxyAdapter:
         )
 
         try:
-            with urllib.request.urlopen(request, timeout=5) as response:
+            opener = urllib.request.build_opener(
+                urllib.request.ProxyHandler({})
+            )
+            with opener.open(request, timeout=5) as response:
                 response_data = json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
             try:
