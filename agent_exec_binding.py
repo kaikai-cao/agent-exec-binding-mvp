@@ -79,15 +79,20 @@ class ToolCall:
     resource: str
     operation: str
     args: dict[str, Any]
+    operation_id: str = ""
 
     def as_dict(self) -> dict[str, Any]:
-        return {
+        result = {
             "agent_id": self.agent_id,
             "tool_id": self.tool_id,
             "resource": self.resource,
             "operation": self.operation,
             "args": self.args,
         }
+        # Omit the optional field for legacy calls so their request hash is stable.
+        if self.operation_id:
+            result["operation_id"] = self.operation_id
+        return result
 
 
 @dataclass(frozen=True)
@@ -208,6 +213,27 @@ class SignedReceipt:
     @property
     def receipt_hash(self) -> str:
         return digest_object(self.as_dict())
+
+
+@dataclass(frozen=True)
+class VerifiedAuthorization:
+    """Immutable, JSON-byte snapshots produced by ToolGateway authorization.
+
+    This object records successful parent-grant verification only. It does not
+    consume the nonce, allocate budget, or authorize a tool side effect by itself.
+    The byte fields prevent callers from mutating nested request/grant mappings.
+    """
+
+    call_json: bytes
+    context_json: bytes
+    grant_payload_json: bytes
+    grant_signature: str
+    grant_hash: str
+    request_hash: str
+    context_hash: str
+    tool_schema_hash: str
+    nonce: str
+    verified_at: int
 
 
 class GrantIssuer:
@@ -384,13 +410,18 @@ class ToolGateway:
         )
         raise AuthorizationError(reason)
 
-    def execute(
+    def verify_authorization(
         self,
         call: ToolCall,
         context: ExecutionContext,
         grant: SignedGrant,
         now: int | None = None,
-    ) -> tuple[list[dict[str, Any]], SignedReceipt]:
+    ) -> VerifiedAuthorization:
+        """Verify a parent SignedGrant without consuming its nonce or executing.
+
+        Reusable by a trusted integration coordinator. Callers must not treat
+        this as a durable replay check: nonce consumption remains in execute().
+        """
         now = int(time.time()) if now is None else int(now)
         # N1: take independent JSON snapshots of every caller-owned object
         # before any check. Signature verification, policy checks, the tool
@@ -421,6 +452,7 @@ class ToolGateway:
             resource=call_data["resource"],
             operation=call_data["operation"],
             args=call_data["args"],
+            operation_id=call_data.get("operation_id", ""),
         )
         # The context is rebuilt from its snapshot as a fresh object: policy
         # checks and the tool adapter must never see the caller's context.
@@ -473,6 +505,46 @@ class ToolGateway:
         nonce = p.get("nonce")
         if not isinstance(nonce, str) or not nonce:
             self._deny("invalid grant nonce", authorized_call)
+
+        return VerifiedAuthorization(
+            call_json=canonical_json(call_data),
+            context_json=canonical_json(context_data),
+            grant_payload_json=canonical_payload,
+            grant_signature=authorized_signature,
+            grant_hash=authorized_grant_hash,
+            request_hash=authorized_request_hash,
+            context_hash=context_hash,
+            tool_schema_hash=actual_schema_hash,
+            nonce=nonce,
+            verified_at=now,
+        )
+
+    def execute(
+        self,
+        call: ToolCall,
+        context: ExecutionContext,
+        grant: SignedGrant,
+        now: int | None = None,
+    ) -> tuple[list[dict[str, Any]], SignedReceipt]:
+        verified = self.verify_authorization(call, context, grant, now=now)
+        call_data = json.loads(verified.call_json)
+        context_data = json.loads(verified.context_json)
+        p = json.loads(verified.grant_payload_json)
+        authorized_signature = verified.grant_signature
+        authorized_call = ToolCall(
+            agent_id=call_data["agent_id"],
+            tool_id=call_data["tool_id"],
+            resource=call_data["resource"],
+            operation=call_data["operation"],
+            args=call_data["args"],
+            operation_id=call_data.get("operation_id", ""),
+        )
+        authorized_context = ExecutionContext(**context_data)
+        authorized_grant_hash = verified.grant_hash
+        authorized_request_hash = verified.request_hash
+        context_hash = verified.context_hash
+        actual_schema_hash = verified.tool_schema_hash
+        nonce = verified.nonce
         with self._nonce_lock:
             if nonce in self.used_nonces:
                 self._deny("grant replay detected", authorized_call)
@@ -492,6 +564,7 @@ class ToolGateway:
             resource=call_data["resource"],
             operation=call_data["operation"],
             args=json_snapshot(call_data["args"]),
+            operation_id=call_data.get("operation_id", ""),
         )
         tool_grant = SignedGrant(json_snapshot(p), authorized_signature)
 

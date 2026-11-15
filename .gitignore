@@ -34,3 +34,6 @@ Thumbs.db
 
 # Private research notes
 /research_brief.md
+
+# Local backup files
+*.bak*

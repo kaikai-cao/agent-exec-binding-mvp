@@ -292,6 +292,57 @@ class AgentExecutionBindingTests(unittest.TestCase):
             results = [future.result(timeout=15) for future in futures]
         return len(executions), results, env
 
+    def test_verify_authorization_returns_immutable_snapshots_without_consuming_nonce(self):
+        gateway = self.env["gateway"]
+        verified = gateway.verify_authorization(
+            self.call, self.env["context"], self.grant, now=NOW + 1
+        )
+        self.assertEqual(verified.request_hash, digest_object(self.call.as_dict()))
+        self.assertEqual(verified.context_hash, digest_object(self.env["context"].as_dict()))
+        self.assertEqual(verified.tool_schema_hash, self.env["tool"].SCHEMA_HASH)
+        self.assertEqual(verified.nonce, self.grant.payload["nonce"])
+        self.assertIsInstance(verified.call_json, bytes)
+        self.assertIsInstance(verified.context_json, bytes)
+        self.assertIsInstance(verified.grant_payload_json, bytes)
+        self.assertNotIn(verified.nonce, gateway.used_nonces,
+                         "verification must not consume the nonce")
+
+    def test_verify_authorization_rejects_forged_grant(self):
+        forged = SignedGrant(dict(self.grant.payload), "not-a-valid-signature")
+        with self.assertRaises(AuthorizationError):
+            self.env["gateway"].verify_authorization(
+                self.call, self.env["context"], forged, now=NOW + 1
+            )
+
+    def test_verify_authorization_rejects_request_substitution(self):
+        args = dict(self.call.args)
+        args["where"] = {"year": 2026, "department": "Finance"}
+        substituted = ToolCall(
+            self.call.agent_id, self.call.tool_id, self.call.resource,
+            self.call.operation, args, self.call.operation_id
+        )
+        with self.assertRaises(AuthorizationError):
+            self.env["gateway"].verify_authorization(
+                substituted, self.env["context"], self.grant, now=NOW + 1
+            )
+
+    def test_verify_authorization_rejects_context_substitution(self):
+        changed = ExecutionContext(
+            self.env["context"].session_id, self.env["context"].task_id,
+            "tenant:other"
+        )
+        with self.assertRaises(AuthorizationError):
+            self.env["gateway"].verify_authorization(
+                self.call, changed, self.grant, now=NOW + 1
+            )
+
+    def test_verify_authorization_rejects_schema_drift(self):
+        self.env["tool"].SCHEMA_HASH = "changed-schema-hash"
+        with self.assertRaises(AuthorizationError):
+            self.env["gateway"].verify_authorization(
+                self.call, self.env["context"], self.grant, now=NOW + 1
+            )
+
     def test_valid_request_executes_and_receipt_verifies(self):
         rows, receipt = self.env["gateway"].execute(
             self.call, self.env["context"], self.grant, now=NOW + 1
@@ -327,6 +378,32 @@ class AgentExecutionBindingTests(unittest.TestCase):
         with self.assertRaises(AuthorizationError):
             self.env["issuer"].issue(self.env["policy"], call, self.env["context"],
                                      self.env["tool"].SCHEMA_HASH, now=NOW)
+
+    def test_operation_id_is_bound_by_signed_request_hash(self):
+        call = ToolCall(
+            agent_id=self.call.agent_id,
+            tool_id=self.call.tool_id,
+            resource=self.call.resource,
+            operation=self.call.operation,
+            args=dict(self.call.args),
+            operation_id="operation-authorized",
+        )
+        grant = self.env["issuer"].issue(
+            self.env["policy"], call, self.env["context"],
+            self.env["tool"].SCHEMA_HASH, now=NOW
+        )
+        substituted = ToolCall(
+            agent_id=call.agent_id,
+            tool_id=call.tool_id,
+            resource=call.resource,
+            operation=call.operation,
+            args=dict(call.args),
+            operation_id="operation-substituted",
+        )
+        with self.assertRaises(AuthorizationError):
+            self.env["gateway"].execute(
+                substituted, self.env["context"], grant, now=NOW
+            )
 
     def test_request_tampering_after_authorization_denied(self):
         """E1.1-b: 10 independent attempts to swap Sales -> Finance after signing.
