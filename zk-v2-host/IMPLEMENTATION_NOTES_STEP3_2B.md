@@ -80,7 +80,7 @@ The 32 Step 3.2B tests are:
   multiple legal resource/filter/selected-field encodings, host/gadget
   consistency of `C_quota`/`R_plan`/`C_statement` plus distinctness of action
   leaf, padding leaf, and ordered parent hash;
-- 26 negative, each driven through `PlanQuotaCircuit::new_raw` with recomputed
+- 27 negative, each driven through `PlanQuotaCircuit::new_raw` with recomputed
   public inputs so the failure comes from a circuit gate, not from the host
   `encode_action()` validator: `B=0`, `L=0`, `m_i=0`, `m_i=65536`, `B=2^32`,
   per-action overflow, aggregate overflow, `n=0`, `n=17`, non-contiguous
@@ -196,7 +196,7 @@ constraint was lowered to make a failing test pass.
 | 2 | `R_plan` computed and constrained in-circuit | yes (instance 1) |
 | 3 | `C_statement` computed and constrained in-circuit | yes (instance 7) |
 | 4 | Host/gadget consistency passes | yes, six primitives per §4 |
-| 5 | Core positive and negative MockProver tests pass | yes, 5 positive + 26 negative |
+| 5 | Core positive and negative MockProver tests pass | yes, 5 positive + 27 negative |
 | 6 | Step 3.2A reproducible | yes, 10 circuit tests + `quota_mock` unchanged |
 | 7 | Python baseline untouched | yes, 80/80 before and after |
 | 8 | Docs match circuit boundary | yes, explicit non-goals in both docs |

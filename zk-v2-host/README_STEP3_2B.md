@@ -32,8 +32,10 @@ current HEAD** rather than from `main`. This preserves every protected file,
 keeps all 80 Python tests reproducible, and leaves the Halo2 baseline identical
 to `main`. No file under these paths was modified.
 
-No `git reset --hard`, `git clean`, or stash was used. This round is local only:
-**no commit, no push, no PR**.
+No `git reset --hard`, `git clean`, or stash was used. The Phase 0 and original
+implementation-round records above are retained as historical records: at that
+time the work was local only (**no commit, no push, no PR**). The subsequent
+commit/push status is recorded in `## Status` below.
 
 ## What the circuit proves
 
@@ -118,7 +120,17 @@ results, and v0.2 difference table.
 
 ## Status
 
-Step 3.2B is complete locally and awaits independent review. Step 3.2C (ZKP
-integration into the Python authorization gateway), Step 3.3 (comparison
-experiments), Step 3.4/4 (adversarial prompt-injection experiments), and any
-novelty claim remain **not started**.
+The implementation was committed as
+`b93b0377a22cddab40b307936f31b8705b5803bb` on
+`feat/step3-2b-plan-root-circuit` and pushed to `origin`. No PR was created and
+no branch was merged. Source-level independent review of the delivered files
+has been completed.
+
+The test results in `IMPLEMENTATION_NOTES_STEP3_2B.md` are Work Buddy's output
+from the implementation round, **not** an independent reproduction. Independent
+reproduction of the test run remains pending and should be reported by the
+reviewer on their own environment.
+
+Step 3.2C (ZKP integration into the Python authorization gateway), Step 3.3
+(comparison experiments), Step 3.4/4 (adversarial prompt-injection experiments),
+and any novelty claim remain **not started**.

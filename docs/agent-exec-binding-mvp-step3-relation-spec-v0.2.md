@@ -3,13 +3,20 @@
 状态：完整关系设计规格（v0.2）。本文定义目标协议的公共输入、
 私有见证、承诺关系及电路约束。
 
-实现状态说明：当前 Rust/Halo2 原型仅实现固定三动作配额子关系。
-16 叶计划 Merkle Root、完整 Statement Commitment、可变动作数量、
-非活动槽位及动作 Schema 兼容性等约束尚未全部纳入 Halo2 电路。
-详见 `zk-v2-host/README_STEP3_2.md`。
+实现状态说明（截至 Step 3.2B）：
 
-因此，本文描述的是目标关系规格，不应被理解为当前电路
-已经完整实现的功能。
+- Step 3.2A 已实现固定三动作配额子关系；
+- Step 3.2B 已将本规格定义的 16 槽位计划根、规范 padding、active prefix、
+  公开工具 schema 的动作结构兼容性、配额承诺及 Statement Commitment
+  纳入 Halo2 电路，并使用 MockProver 完成测试；
+- Ed25519 授权信封验证、私有 allowlist 证明、nonce/expiry、nullifier 原子性、
+  数据库执行及结果真实性仍未由该电路证明；
+- Python 授权信封和执行网关尚未接入真实 Halo2 proof。
+
+详见 `zk-v2-host/README_STEP3_2.md`（Step 3.2A）与
+`zk-v2-host/README_STEP3_2B.md`（Step 3.2B）。
+
+本文定义的是目标关系规格；上述实现状态不等于端到端 ZK Agent 授权系统已完成。
 
 ## 0. 本版结论
 
@@ -305,9 +312,17 @@ Ed25519 信封继续负责认证授权方并绑定：协议版本、policy ID/ve
 
 ## 8. v1 证明边界
 
-说明：本节描述的是协议设计中 v1 证明范围，不代表当前
-Rust/Halo2 原型的实际证明范围。当前原型仅实现固定三动作
-配额子关系，具体边界以 `zk-v2-host/README_STEP3_2.md` 为准。
+说明：本节描述 v1 证明范围，并需与当前 Rust/Halo2 原型的实现边界分开阅读：
+
+- Step 3.2A：`quota_circuit` 实现固定三动作 quota 子关系；
+- Step 3.2B：`plan_quota_circuit` 实现 16-slot plan-root 与
+  statement-binding 算术关系，包括 active prefix、规范 padding、配额承诺
+  和 Statement Commitment 的电路内计算，以及公开工具 schema 的
+  动作结构兼容性检查。
+
+这里的结构兼容性是公开工具 schema 检查，不是私有 allowlist 的 ZK 证明。
+具体边界以 `zk-v2-host/README_STEP3_2.md` 与
+`zk-v2-host/README_STEP3_2B.md` 为准。
 
 电路证明：计划中每步的预留行数、隐藏单步上限 L、隐藏总预算 B，以及被公开承诺的有序计划根之间满足约束。
 
@@ -353,15 +368,13 @@ v1 不证明：
 | 工作项                            | 当前状态                |
 | ------------------------------ | ------------------- |
 | v0.2 关系规格                      | 已形成设计规格             |
-| Poseidon Host 编码与配额承诺          | 已实现                 |
-| 固定深度 16 叶 Poseidon 计划树         | 已实现 Host 参考实现       |
-| Statement Commitment 与公共输入编码   | 已实现 Host 参考实现       |
-| 固定三动作 Halo2 配额电路               | 已实现原型，MockProver 测试 |
-| 完整计划根与 Statement Commitment 约束 | 待实现                 |
-| 可变动作数量与非活动槽位约束                 | 待实现                 |
-| 动作 Schema 兼容性约束                | 待实现                 |
-| 证明与 Python 授权信封绑定              | 待实现                 |
-| 证明接入执行网关                       | 待实现                 |
+| Poseidon Host 编码与配额承诺          | 已实现；Host 与 Halo2 结果一致 |
+| 固定深度 16 叶 Poseidon 计划树         | 已实现；Host 参考实现与电路内 16 叶根均覆盖 |
+| Statement Commitment 与公共输入编码   | 已实现；Host 参考实现与电路内计算均覆盖 |
+| 固定三动作 Halo2 配额电路（Step 3.2A）    | 已实现原型，MockProver 测试 |
+| 16 叶计划根、Statement Binding、active prefix、padding 与动作结构约束（Step 3.2B） | 已实现，MockProver 测试；动作结构检查属于公开工具 schema，不是私有 allowlist 证明 |
+| Halo2 proof 与 Python Ed25519 授权信封绑定 | 待实现                 |
+| proof 接入执行网关                     | 待实现                 |
 | 端到端安全性与性能评估                    | 待实现                 |
 
 在 host/gadget 一致性测试通过前，不开始性能优化，也不宣称完成 ZK 授权系统。

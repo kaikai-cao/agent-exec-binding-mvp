@@ -2,8 +2,11 @@
 //!
 //! The host implementation defines canonical action encoding, Poseidon hashes,
 //! quota and statement commitments, and a fixed-depth 16-leaf Merkle tree. The
-//! `quota_circuit` module adds an initial fixed-three-action Halo2 quota circuit;
-//! full plan-root and statement binding remain subsequent implementation steps.
+//! `quota_circuit` module is the Step 3.2A fixed-three-action quota circuit,
+//! retained as the baseline; `plan_quota_circuit` is the Step 3.2B 16-slot
+//! plan-root and statement-binding circuit. Neither is integrated with the
+//! Python authorization envelope or execution gateway, and MockProver testing
+//! does not mean a real Halo2 proof has been generated.
 
 use ff::{Field, PrimeField};
 use halo2_poseidon::{ConstantLength, Hash, P128Pow5T3};
