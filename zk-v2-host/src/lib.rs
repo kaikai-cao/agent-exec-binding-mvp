@@ -19,10 +19,12 @@ pub const MAX_SELECTED_FIELDS: usize = 3;
 pub const DATA_QUERY_SCHEMA_ID: u64 = 2;
 
 pub const D_QUOTA: u64 = 0x5155_4f54_415f_5632;
-const D_ACTION: u64 = 0x4143_544e_5f56_32;
-const D_NODE: u64 = 0x4e4f_4445_5f56_325f;
-const D_PAD: u64 = 0x5041_445f_5632_5f5f;
-const D_STATEMENT: u64 = 0x5354_4154_454d_5432;
+// Step 3.2B: the circuit module reuses these exact domain tags so that host and
+// gadget share one encoding definition. Only visibility changed; values are frozen.
+pub(crate) const D_ACTION: u64 = 0x4143_544e_5f56_32;
+pub(crate) const D_NODE: u64 = 0x4e4f_4445_5f56_325f;
+pub(crate) const D_PAD: u64 = 0x5041_445f_5632_5f5f;
+pub(crate) const D_STATEMENT: u64 = 0x5354_4154_454d_5432;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DataQueryAction {
@@ -613,5 +615,7 @@ mod tests {
     }
 }
 
+/// Step 3.2B full 16-leaf plan-root and statement-binding circuit.
+pub mod plan_quota_circuit;
 /// First Halo2 quota-circuit increment (fixed three-action shape).
 pub mod quota_circuit;

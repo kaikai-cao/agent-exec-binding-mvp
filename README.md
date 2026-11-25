@@ -65,20 +65,23 @@ python -m unittest discover -s tests -v
 
 ## Tests
 
-The repository currently has 80 passing automated tests:
+The repository currently has 133 passing automated tests:
 
 | Test scope | Count | Status |
 | --- | --- | --- |
-| Python Agent Execution Binding | 24 | passed |
+| Python Agent Execution Binding | 40 | passed |
 | Python Data Access | 21 | passed |
+| Python Independent Execution Proxy | 5 | passed |
 | Python Plan Batch | 14 | passed |
 | Rust Host | 11 | passed |
-| Rust Halo2 quota circuit | 10 | passed |
-| **Total** | **80** | **passed** |
+| Rust Halo2 quota circuit (Step 3.2A) | 10 | passed |
+| Rust Halo2 plan-root circuit (Step 3.2B) | 32 | passed |
+| **Total** | **133** | **passed** |
 
-- 59 Python unit tests;
+- 80 Python unit tests;
 - 11 Rust host tests;
-- 10 Rust Halo2 quota-circuit tests.
+- 10 Rust Step 3.2A Halo2 quota-circuit tests;
+- 32 Rust Step 3.2B Halo2 plan-root / statement-binding tests.
 
 Python tests:
 
@@ -93,13 +96,14 @@ cd zk-v2-host
 cargo test --locked
 ```
 
-The Halo2 quota circuit is additionally exercised through
-the `quota_mock` demo, while the host-side Poseidon plan,
-commitment, public-input, and Merkle inclusion functionality
-is exercised through `agent-exec-binding-host-v2`.
+The Halo2 circuits are additionally exercised through the
+`quota_mock` and `plan_quota_mock` demos, while the host-side
+Poseidon plan, commitment, public-input, and Merkle inclusion
+functionality is exercised through `agent-exec-binding-host-v2`.
 
-These tests validate the implemented prototype, not the
-complete v0.2 relation or an end-to-end ZK execution system.
+These tests validate the implemented prototypes, not an
+end-to-end ZK execution system; see the Halo2 section below
+for the exact proof boundary.
 
 The Python suite covers successful execution plus policy violations, request/action substitution, context/session substitution, schema drift, expiry, replay, ordered-step enforcement, Merkle inclusion verification, aggregate-budget denial, forged grant, and audit tampering. It also checks authorized/executed request consistency, exception-path audit outcomes, nonce binding consistency, and includes a no-lock mutation guard for the concurrency test. Passing tests establish expected behavior for this prototype only; they do not establish production security, end-to-end ZK authorization, or security effectiveness against a compromised tool server.
 
@@ -118,28 +122,25 @@ Primary metrics: attack success rate (ASR), false deny rate on benign calls, aut
 
 ## Current Halo2 prototype
 
-The repository now includes an initial Halo2 quota circuit in
-`zk-v2-host`.
+The repository includes two Halo2 circuits in `zk-v2-host`:
 
-The circuit proves a fixed three-action quota sub-relation:
+- Step 3.2A (`quota_circuit.rs`): a fixed three-action quota sub-relation,
+  retained unchanged as the comparison baseline;
+- Step 3.2B (`plan_quota_circuit.rs`): a 16-slot plan-root and statement-binding
+  circuit that constrains the hidden `(B, L)` quota relation, canonical action
+  encoding, active-prefix/padding rules, an in-circuit four-level Poseidon
+  `R_plan`, an in-circuit `C_statement`, 128-bit context/schema limb range
+  checks, and all eight public inputs in the v0.2 order.
 
-- a private budget, per-action limit, and blinding factor match a public
-  Poseidon quota commitment;
-- the budget and per-action limits satisfy their integer range constraints;
-- each action's reserved row count does not exceed the per-action limit;
-- the sum of the three reserved row counts does not exceed the budget.
+Both prototypes are tested with Halo2 `MockProver`; Step 3.2B is exercised by
+`cargo run --locked --bin plan_quota_mock`.
 
-The prototype is tested with Halo2 `MockProver`.
+Neither circuit is integrated with the Python authorization envelope or
+execution gateway, and neither proves Ed25519 signatures, private resource /
+field / filter allowlists, plan freshness, nullifier atomicity, or database
+execution truth. Completing Step 3.2B does not constitute an end-to-end ZK
+Agent execution system or a novelty claim over competing work.
 
-This is not yet a proof of the complete v0.2 relation. In particular,
-the circuit does not yet constrain the 16-leaf plan Merkle root,
-the full statement commitment, variable action counts, inactive slots,
-or action-schema compatibility. It is also not integrated with the
-Python authorization envelope and execution gateway.
-
-The Rust host currently provides Poseidon action encoding, plan-tree
-construction, quota and statement commitments, and public-input encoding.
-These host-side functions must not be confused with constraints enforced
-by the current Halo2 circuit.
-
-See `zk-v2-host/README_STEP3_2.md` for the exact circuit boundary.
+See `zk-v2-host/README_STEP3_2.md` and `zk-v2-host/README_STEP3_2B.md` for the
+exact circuit boundaries, and `zk-v2-host/IMPLEMENTATION_NOTES_STEP3_2B.md`
+for measured results and trust boundaries.
