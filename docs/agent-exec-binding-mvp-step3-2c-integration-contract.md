@@ -215,7 +215,7 @@ V2 claims 至少包含：
   "context_digest_sha256": "<H_ctx-hex>",
   "plan_root_poseidon": "<R_plan-field-hex>",
   "action_count": 3,
-  "plan_nonce": "<hex>",
+  "plan_nonce": "<64-lowercase-hex-chars-encoding-32-bytes>",
   "issued_at": 0,
   "expires_at": 0,
   "vk_id": "<pinned-vk-id: ops-deployment-identifier>",
@@ -237,6 +237,8 @@ V2 claims 至少包含：
 ```
 
 `policy_commitment_sha256` 继续是 SHA-256 私有策略承诺，不声称等于 `C_quota`。`[data_access.py:239-242；docs/agent-exec-binding-mvp-step3-relation-spec-v0.2.md:58-75]` V2 Grant/ProofBundle/Receipt 的完整字段命名表见 D.4。
+
+`[REC]` `C_quota` 在本 schema 中**只**作为签名 claims 的 `public_instances.values[0]`（`index = 0`、`name = "C_quota"`、`field_hex`）出现；Grant 不设顶层 `C_quota` claim，不得维护重复字段。
 
 ### D.2 `[REC]` proof 是独立传输对象
 
@@ -278,7 +280,7 @@ V2 Grant、ProofBundle 与 Receipt 必须使用同一套字段名，不得混用
 | 工具 Schema 摘要 | `tool_schema_digest_sha256` | Grant |
 | Poseidon 计划根 | `plan_root_poseidon` | Grant、Inclusion Proof、Receipt |
 | 动作数量 | `action_count` | Grant |
-| 授权随机数 | `plan_nonce` | Grant |
+| 授权随机数（32 字节；Grant JSON 中为恰好 64 个小写 hex 字符） | `plan_nonce` | Grant |
 | 验证密钥部署标识 | `vk_id` | Grant、ProofBundle、Cache |
 | 八个公共输入 | `public_instances` | Grant |
 | ProofBundle 摘要 | `proof_bundle_digest_sha256` | Grant、ProofBundle、Cache |
@@ -286,6 +288,8 @@ V2 Grant、ProofBundle 与 Receipt 必须使用同一套字段名，不得混用
 | Receipt 动作叶 | `action_leaf_poseidon` | Receipt |
 | 辅助 Action 摘要 | `action_json_digest_sha256` | Receipt（仅日志/追踪） |
 | 逐步消费标识 | `step_nullifier` | Receipt、Nullifier store |
+
+`plan_nonce` 必须以解码后的原始 32 bytes 参与 V2 `step_nullifier` 的 SHA-256 preimage，V2 的唯一字节级派生规则见 F.2 第 5 步；V1 `step_nullifier` 算法及 `nullifier:v1:` 前缀不变。
 
 ---
 
@@ -380,7 +384,7 @@ let pk = keygen_pk(&params, vk, &keygen_circuit)?; // 注意 keygen_pk 取得 vk
 
 - Authority/Prover：`B = policy.aggregate_row_budget`，`L = policy.max_rows_per_action`，由 Authority 从真实私有策略中取出；**不允许接受 Agent 或外部调用方自行指定的 B/L**。生成电路 witness 时必须使用这两个准确值。`[data_access.py:137-145]`
 - `r` 用系统 CSPRNG（见 E.2）在 Rust 端按拒绝采样生成合法 `Fp`，保证均匀且非 fixture；不得使用 `main.rs:14` 的固定 demo 值。`[docs/agent-exec-binding-mvp-step3-relation-spec-v0.2.md:68；zk-v2-host/src/main.rs:11-14]`
-- Authority 负责确保对外签名的 `C_quota` 对应这份策略中的 B/L。
+- Authority 负责确保签名 Grant 中作为 `public_instances.values[0]` 的 `C_quota` 对应这份策略中的 B/L，并确保 proof 使用这同一公共实例。
 
 `[REC]` 本 MVP 的推荐信任模型：**Authority 与 Rust Prover 后端处于同一受信任签发边界，Rust 后端是 Authority 的密码学执行组件。** 必须明确：若未来把 Prover 作为独立且不受信任的外部服务，仅靠当前电路不能证明它使用了 Authority 策略中准确的 B/L；届时必须增加额外的策略绑定机制，不能沿用“Authority 已经确保”的模糊表述。B/L 本身不是 allowlist 的证明。
 
@@ -444,7 +448,7 @@ transcript 选用 `Blake2bWrite<Vec<u8>, vesta::Affine, Challenge255<vesta::Affi
 3. 验证 Grant 中全部八个 public instances 的格式、顺序与 field-hex 编码。
 4. 检查 `plan_root_poseidon == public_instances[1]`；检查 `action_count == public_instances[2] == n` 且 `1 <= n <= 16`。**Gateway 此时不重建 Merkle Tree。**
 5. 从已验证 claims 重算 `H_ctx` / `H_schema`（instances 3..6），并由公开实例重算 `C_statement`，检查其与 instances[7] 一致。`[zk-v2-host/src/lib.rs:389-405]`
-6. 检查签名 claims 中的 `C_quota` 与 `public_instances[0]` 完全一致。**Gateway 不重算 `C_quota`**：其输入 `(B,L,r)` 是私有见证，Gateway 不知道也无法重算；`C_statement` 的输入全部公开，二者不可混为一谈。
+6. `C_quota` 的唯一来源是 Grant 签名覆盖的 `public_instances.values[0]`：必须验证其 `index == 0`、`name == "C_quota"`，并检查 `field_hex` 符合 C.3 的 32-byte 小写 field-hex 编码；Halo2 verifier 使用的第 0 个公共输入必须是这一已签名值。不新增顶层 `C_quota` claim，不要求维护重复字段。**Gateway 不重算 `C_quota`**：其输入 `(B,L,r)` 是私有见证，Gateway 不知道也无法重算；Gateway 不检查、也不声称 `C_quota` 与 SHA-256 `policy_commitment_sha256` 存在任何关系。该隐藏承诺由 Authority 在受信任签发边界内从私有策略取出 B/L，并确保 proof 与签名 Grant 使用相同的公共实例；`C_statement` 的输入全部公开，二者不可混为一谈。
 7. 检查 `vk_id` 与部署 pin 一致、`proof_bundle_digest_sha256` 与 Grant 签名字段一致、`public_instances_digest_sha256` 与 8 个值一致。
 8. 调用 Rust `verify_proof`（`SingleVerifier`）；`Err` 则拒绝，仅 `Ok(())` 视为成功。
 9. 成功后写入 validated-plan cache，记录绑定 `grant_digest_sha256`、`proof_bundle_digest_sha256`、`vk_id`、`public_instances_digest_sha256`、`context_digest_sha256`、`tool_schema_digest_sha256`、`expires_at`。缓存只表示“完整 proof 验证通过”，不表示 freshness 已永久有效，也不含任何 nullifier 消费结果。
@@ -459,7 +463,23 @@ transcript 选用 `Blake2bWrite<Vec<u8>, vesta::Affine, Challenge255<vesta::Affi
 2. 若未命中 cache，先执行 F.1；不允许跳过 proof 验证直接执行。
 3. 用 Rust `verify_inclusion(action, n, proof, instances[1])` 验证当前动作属于同一个 Poseidon 根；`Ok(true)` 通过，`Ok(false)` 或 `Err` 拒绝。`[zk-v2-host/src/lib.rs:314-338]`
 4. 检查 `proof.index == action.step` 且 `0 <= action.step < n`，恰好四层 sibling，Rust 规范编码成功；拒绝 padding 叶。`[zk-v2-host/src/lib.rs:297-300,314-338]`
-5. 以 V2 域分离规则派生 `step_nullifier`：`nullifier:data-query-v2-poseidon:v1:` + `protocol` + `plan_nonce` + `action.step` 的明确编码；该前缀与 V1 的 `nullifier:v1:` 不同，V1 `step_nullifier` 不修改。`[plan_batch.py:332-333；data_access.py:479-490]` 按 step 顺序原子消费；当前进程内存锁不等于跨进程/多网关持久原子，真实部署前仍需持久化事务状态。`[F20]`
+5. 以 V2 域分离规则派生 `step_nullifier`，**以下字节规则是唯一允许的编码**；Python 与 Rust 必须逐字节一致，不允许自行选择其他分隔符、整数宽度、端序或文本表示：
+
+   - `protocol`：必须严格等于 ASCII 字符串 `data-query-v2-poseidon`。
+   - `plan_nonce`：必须是 32 字节随机值；Grant JSON 中以恰好 64 个小写十六进制字符表示，解析时解码为原始 32 bytes；大写、空白、长度错误或非法 hex 一律拒绝。参与哈希的是解码后的 32 字节原始值，不是 64 字符 hex 文本。
+   - `action.step`：无符号 32-bit 整数，取值范围 `0..=15`，采用 4 字节 big-endian 编码；参与哈希的不是十进制字符串。
+
+   ```
+   preimage =
+       b"nullifier:data-query-v2-poseidon:v1\0"
+     || b"data-query-v2-poseidon\0"
+     || plan_nonce_raw[32]
+     || uint32_be(action.step)
+
+   step_nullifier = lowercase_hex(SHA-256(preimage))
+   ```
+
+   顺序固定为 prefix → protocol → nonce → step；preimage 首段以 `\0` 结束（不是冒号），`nullifier:data-query-v2-poseidon:v1:` 仅作域标签。输出是 SHA-256 的 32-byte digest，以 64 个小写 hex 字符表示。本规范使用 SHA-256，不新增 Poseidon nullifier 算法。该域与 V1 的 `nullifier:v1:` 分离，V1 `step_nullifier` 算法及前缀完全不变。`[plan_batch.py:332-333；data_access.py:479-490]` 按 step 顺序原子消费；当前进程内存锁不等于跨进程/多网关持久原子，真实部署前仍需持久化事务状态。`[F20]`
 6. 调用工具并验证签名回执；V2 Receipt 必须以 `action_leaf_poseidon`（与该 Inclusion Proof 对应的 Poseidon action leaf）作为执行动作的权威密码学绑定；若保留 SHA-256 辅助日志摘要，另用 `action_json_digest_sha256`，且不得用于 V2 Merkle inclusion 验证。回执另绑定 `grant_digest_sha256`、`plan_root_poseidon`、step、`step_nullifier`、result digest、`context_digest_sha256`、`tool_schema_digest_sha256`。`[data_access.py:403-418,499-528]` V2 不得使用语义不明的 `action_hash`。
 
 ### F.3 `[REC]` 完整 proof 是否每步重复验证
@@ -473,12 +493,12 @@ transcript 选用 `Blake2bWrite<Vec<u8>, vesta::Affine, Challenge255<vesta::Affi
 ## G. 信任边界
 
 - `[FACT]` `DataAccessAuthority` 仍是可信私有 allowlist 检查者；它按策略检查资源、字段、过滤字段、过滤值及行数，并用 Ed25519 签名。`[data_access.py:245-331]`
-- `[FACT]` `C_quota` 只承诺 `(B,L,r)`；不证明 B/L 与 SHA-256 `policy_commitment_sha256` 等价，也不证明私有 allowlist。`[docs/agent-exec-binding-mvp-step3-relation-spec-v0.2.md:58-75；data_access.py:239-242]` `[REC]` 本 MVP 由 Authority 在同一受信任签发边界内从真实策略取 B/L 并确保签名 `C_quota` 对应之；Gateway 不重算该隐藏承诺，只校验签名 claims 与实例 0 一致。
+- `[FACT]` `C_quota` 只承诺 `(B,L,r)`；不证明 B/L 与 SHA-256 `policy_commitment_sha256` 等价，也不证明私有 allowlist。`[docs/agent-exec-binding-mvp-step3-relation-spec-v0.2.md:58-75；data_access.py:239-242]` `[REC]` 本 MVP 由 Authority 在同一受信任签发边界内从真实策略取 B/L，并确保 proof 与签名 Grant 的 `public_instances.values[0]` 使用同一 `C_quota`；Gateway 不重算该隐藏承诺，也不检查其与 `policy_commitment_sha256` 的关系，只校验签名覆盖的实例 0 的格式（`index = 0`、`name = "C_quota"`、field-hex）并确保 verifier 使用同一已签名值。
 - `[FACT]` 公开工具 schema 兼容性是结构检查，不是私有 allowlist 的 ZK 证明。`[docs/agent-exec-binding-mvp-step3-relation-spec-v0.2.md:313-323]`
 - `[REC]` 证明生成方知道其使用的私有 witness `(B,L,r,words,active,limbs)`；verifier 只看到约束成立，不获得 witness 真实性之外的保证。`[zk-v2-host/src/plan_quota_circuit.rs:50-62]`
 - `[REC]` Gateway 必须执行 proof 验证；只检查 Ed25519 签名不构成 ZK 验证。Gateway 不持有完整计划，也不重建 `R_plan`；它依赖 Authority 已在签发前检查过完整计划并保证 `R_plan` 对应之。
 - `[FACT]` 工具回执是工具服务自己的签名声明，不证明外部数据库查询真实、完整、最新。`[data_access.py:362-418,499-528]`
-- `[FACT]` nullifier 当前是单进程内存集合；多网关原子消费与持久化仍是独立工程问题。`[data_access.py:435-437,481-490；plan_batch.py:444-445]` `[REC]` V2 使用与 V1 域分离的 `nullifier:data-query-v2-poseidon:v1:` 前缀，V1 前缀不变。
+- `[FACT]` nullifier 当前是单进程内存集合；多网关原子消费与持久化仍是独立工程问题。`[data_access.py:435-437,481-490；plan_batch.py:444-445]` `[REC]` V2 使用与 V1 域分离的 nullifier 派生规则（preimage 首段 `b"nullifier:data-query-v2-poseidon:v1\0"`，唯一字节规则见 F.2 第 5 步），V1 的 `nullifier:v1:` 前缀与算法不变。
 - `[FACT]` 本方案不证明不存在数据出口绕行、不证明查询组合不泄漏敏感信息、不提供差分隐私。`[docs/agent-exec-binding-mvp-step3-relation-spec-v0.2.md:313-338]`
 - `[FACT]` 电路不证明 Ed25519 签名有效性、nonce/expiry、数据库执行结果或真实 Halo2 proof 已生成。`[zk-v2-host/README_STEP3_2B.md:71-83,121-136]`
 
@@ -497,7 +517,7 @@ transcript 选用 `Blake2bWrite<Vec<u8>, vesta::Affine, Challenge255<vesta::Affi
 | 7 | 错误 VK | pinned `vk_id`（部署标识）不一致，拒绝；不依赖不存在的 VK 指纹 API | `keygen.rs:189-198`；`Params::write/read` `[commitment.rs:169,184]` |
 | 8 | action 修改 / 重排 / 无效 step | Rust 重新编码 + `verify_inclusion` 失败 | `lib.rs:297-338` |
 | 9 | proof 正确但 grant 签名无效 | `Ed25519 verify` 失败，先于 proof 验证 | `data_access.py:454-456` |
-| 10 | nonce replay / V1-V2 串域重放 | V2 `step_nullifier` 前缀 `nullifier:data-query-v2-poseidon:v1:` 与 V1 分离；已消费则拒绝 | `plan_batch.py:332-333；data_access.py:481-490`；`[REC F.2]` |
+| 10 | nonce replay / V1-V2 串域重放 | V2 `step_nullifier` 按 F.2 第 5 步唯一字节规则派生（preimage 首段 `b"nullifier:data-query-v2-poseidon:v1\0"`），与 V1 `nullifier:v1:` 域分离；已消费则拒绝；域分离不等于跨网关原子消费 | `[REC F.2]`；`plan_batch.py:332-333；data_access.py:481-490` |
 | 11 | expired grant | `now >= expires_at` 拒绝 | `data_access.py:470-473` |
 | 12 | Gateway 只信任签名、不验证 proof | 代码路径要求 validated-plan cache 只能由 F.1 的 `verify_proof` 成功后写入 | `[REC F.1/F.2]` |
 | 13 | proof 被重复验证或未绑定缓存记录 | 缓存记录绑定 grant/proof_bundle/vk/instances/context/schema/expiry；不匹配或 VK pin 变更则失效；缓存不绕过 freshness 与逐 step nullifier | `[REC F.3]` |
